@@ -1,0 +1,23 @@
+[package]
+name = "aw-mcp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "aw-mcp"
+path = "src/main.rs"
+
+[dependencies]
+aw-domain = { path = "../domain" }
+aw-storage-sqlite = { path = "../storage-sqlite" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dotenvy.workspace = true
+rmcp.workspace = true
