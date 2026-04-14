@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 aw-domain = { path = "../domain" }
 aw-storage-sqlite = { path = "../storage-sqlite" }
+aw-storage-postgres = { path = "../storage-postgres" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -23,3 +24,7 @@ dotenvy.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+aw-storage-sqlite = { path = "../storage-sqlite" }

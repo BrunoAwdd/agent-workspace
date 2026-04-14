@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agent-workspace": {
+      "command": "/home/bruno/projects/agent-workspace/target/debug/aw-mcp",
+      "env": {
+        "SQLITE_URL": "sqlite:///home/bruno/projects/agent-workspace/agent-workspace.db"
+      }
+    }
+  }
+}

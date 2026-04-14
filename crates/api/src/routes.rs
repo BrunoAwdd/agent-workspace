@@ -1,36 +1,52 @@
-use std::sync::Arc;
-use axum::{Router, routing::{get, post}};
-use aw_domain::storage::WorkspaceStorage;
+use axum::{routing::{delete, get, post}, Router};
 
-pub fn build(storage: Arc<dyn WorkspaceStorage>) -> Router {
+use crate::{
+    handlers::{agents, dependencies, events, handoffs, inbox, locks, messages, sessions, summary, tasks},
+    state::AppState,
+};
+use tower_http::cors::{Any, CorsLayer};
+
+pub fn build(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         // Agents
-        .route("/agents", get(|| async { "list agents" }))
-        .route("/agents", post(|| async { "create agent" }))
+        .route("/agents",     get(agents::list_agents).post(agents::create_agent))
+        .route("/agents/:id", get(agents::get_agent))
         // Sessions
-        .route("/sessions/check-in",  post(|| async { "check-in" }))
-        .route("/sessions/heartbeat", post(|| async { "heartbeat" }))
-        .route("/sessions/check-out", post(|| async { "check-out" }))
+        .route("/sessions/active",   get(sessions::list_active))
+        .route("/sessions/check-in",  post(sessions::check_in))
+        .route("/sessions/heartbeat", post(sessions::heartbeat))
+        .route("/sessions/check-out", post(sessions::check_out))
+        // Events
+        .route("/events", get(events::list_events))
         // Messages
-        .route("/messages", post(|| async { "send message" }))
+        .route("/messages", get(messages::list_messages).post(messages::send_message))
         // Inbox
-        .route("/inbox/:agent_id",     get(|| async { "list inbox" }))
-        .route("/inbox/:item_id/ack",  post(|| async { "ack inbox item" }))
+        .route("/inbox/:agent_id",    get(inbox::list_inbox))
+        .route("/inbox/:item_id/ack", post(inbox::ack_inbox_item))
         // Tasks
-        .route("/tasks",              post(|| async { "create task" }))
-        .route("/tasks/:id/claim",    post(|| async { "claim task" }))
-        .route("/tasks/:id/status",   post(|| async { "update task status" }))
+        .route("/tasks",             get(tasks::list_tasks).post(tasks::create_task))
+        .route("/tasks/:id/claim",   post(tasks::claim_task))
+        .route("/tasks/:id/status",  post(tasks::update_task_status))
+        .route("/tasks/:id/assign",  post(tasks::assign_task))
         // Locks
-        .route("/locks",          post(|| async { "acquire lock" }))
-        .route("/locks/:id",      axum::routing::delete(|| async { "release lock" }))
+        .route("/locks",     post(locks::acquire_lock))
+        .route("/locks/:id", delete(locks::release_lock))
         // Handoffs
-        .route("/handoffs",           post(|| async { "create handoff" }))
-        .route("/handoffs/:agent_id", get(|| async { "list handoffs" }))
+        .route("/handoffs",           post(handoffs::create_handoff))
+        .route("/handoffs/:agent_id", get(handoffs::list_handoffs))
         // Dependencies
-        .route("/dependencies",      post(|| async { "upsert dependency" }))
-        .route("/dependencies/:key", get(|| async { "get dependency" }))
-        .with_state(storage)
+        .route("/dependencies",      post(dependencies::upsert_dependency))
+        .route("/dependencies/:key", get(dependencies::get_dependency))
+        // Summary
+        .route("/summary", get(summary::get_summary))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+        .with_state(state)
 }
 
 async fn health() -> &'static str {

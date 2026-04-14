@@ -9,6 +9,14 @@ use aw_domain::storage::WorkspaceStorage;
 
 use crate::rows::*;
 
+/// Sessions with no heartbeat for longer than this are marked dead on next check_in.
+const HEARTBEAT_TIMEOUT_SECS: i64 = 300;
+
+/// Inbox items are automatically requeued up to this many times before staying failed.
+/// This value must match the `max_retries` column default in the migration.
+#[allow(dead_code)]
+const MAX_INBOX_RETRIES: i64 = 3;
+
 pub struct SqliteStorage {
     pool: SqlitePool,
 }
@@ -16,6 +24,25 @@ pub struct SqliteStorage {
 impl SqliteStorage {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    /// Fire-and-forget event emission. Never fails the caller.
+    async fn emit(&self, agent_id: Option<&str>, session_id: Option<Uuid>, kind: &str, payload: serde_json::Value) {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        let payload_str = serde_json::to_string(&payload).unwrap_or_default();
+        let _ = sqlx::query(
+            "INSERT INTO events (id, agent_id, session_id, kind, payload, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind(id.to_string())
+        .bind(agent_id)
+        .bind(session_id.map(|u| u.to_string()))
+        .bind(kind)
+        .bind(payload_str)
+        .bind(now)
+        .execute(&self.pool)
+        .await;
     }
 }
 
@@ -29,9 +56,18 @@ impl WorkspaceStorage for SqliteStorage {
         let perms = serde_json::to_string(&input.permissions).unwrap_or_default();
         let meta = serde_json::to_string(&input.metadata.unwrap_or_default()).unwrap_or_default();
 
+        // Upsert — idempotent registration. An agent coming back after a crash
+        // or re-deploying with the same ID gets its record updated, not an error.
         sqlx::query(
             "INSERT INTO agents (id, name, role, capabilities, permissions, status, metadata, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'offline', ?6, ?7, ?7)",
+             VALUES (?1, ?2, ?3, ?4, ?5, 'offline', ?6, ?7, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               role = excluded.role,
+               capabilities = excluded.capabilities,
+               permissions = excluded.permissions,
+               metadata = excluded.metadata,
+               updated_at = excluded.updated_at",
         )
         .bind(&input.id)
         .bind(&input.name)
@@ -97,10 +133,57 @@ impl WorkspaceStorage for SqliteStorage {
             .collect())
     }
 
+    // ── Maintenance ───────────────────────────────────────────────────────────
+
+    async fn sweep_dead_sessions(&self, timeout_secs: u64) -> Result<u64> {
+        let now = Utc::now();
+        let now_str = now.to_rfc3339();
+        let cutoff = (now - chrono::Duration::seconds(timeout_secs as i64)).to_rfc3339();
+
+        sqlx::query(
+            "DELETE FROM locks WHERE owner_session_id IN (
+                SELECT id FROM agent_sessions WHERE status = 'active' AND last_seen_at < ?1
+             )",
+        )
+        .bind(&cutoff)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let swept = sqlx::query(
+            "UPDATE agent_sessions SET status = 'dead'
+             WHERE status = 'active' AND last_seen_at < ?1",
+        )
+        .bind(&cutoff)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?
+        .rows_affected();
+
+        sqlx::query(
+            "UPDATE agents SET status = 'offline', updated_at = ?1
+             WHERE status = 'active'
+               AND id NOT IN (SELECT DISTINCT agent_id FROM agent_sessions WHERE status = 'active')",
+        )
+        .bind(&now_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(swept)
+    }
+
     // ── Sessions ──────────────────────────────────────────────────────────────
 
-    async fn check_in(&self, input: CheckInInput) -> Result<AgentSession> {
+    async fn check_in(&self, input: CheckInInput) -> Result<CheckInResult> {
         let now = Utc::now();
+        let now_str = now.to_rfc3339();
+
+        // 1. Sweep dead sessions and expire stale locks.
+        let dead_sessions_swept = self.sweep_dead_sessions(HEARTBEAT_TIMEOUT_SECS as u64).await?;
+        let locks_expired = self.expire_stale_locks().await?;
+
+        // 5. Open the new session.
         let id = Uuid::new_v4();
         let meta = serde_json::to_string(&input.metadata.unwrap_or_default()).unwrap_or_default();
 
@@ -110,22 +193,75 @@ impl WorkspaceStorage for SqliteStorage {
         )
         .bind(id.to_string())
         .bind(&input.agent_id)
-        .bind(now.to_rfc3339())
+        .bind(&now_str)
         .bind(&meta)
         .execute(&self.pool)
         .await
         .map_err(|e| WorkspaceError::Storage(e.into()))?;
 
-        // Update agent status
         sqlx::query("UPDATE agents SET status = 'active', updated_at = ?1 WHERE id = ?2")
-            .bind(now.to_rfc3339())
+            .bind(&now_str)
             .bind(&input.agent_id)
             .execute(&self.pool)
             .await
             .map_err(|e| WorkspaceError::Storage(e.into()))?;
 
-        self.get_session(id).await?.ok_or_else(|| {
+        let session = self.get_session(id).await?.ok_or_else(|| {
             WorkspaceError::Storage(anyhow::anyhow!("session not found after check-in"))
+        })?;
+
+        // 6. Collect pending context for this agent.
+        let inbox = self.list_inbox(&input.agent_id).await?;
+
+        let pending_tasks: Vec<Task> = {
+            let rows = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, String, String, String)>(
+                "SELECT id, title, description, kind, status, priority, assigned_agent_id, source_ref, metadata, created_at, updated_at
+                 FROM tasks
+                 WHERE assigned_agent_id = ?1 AND status NOT IN ('done', 'failed', 'cancelled')
+                 ORDER BY created_at ASC",
+            )
+            .bind(&input.agent_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+            rows.into_iter().map(|(id, title, desc, kind, status, priority, assigned, src, meta, ca, ua)| Task {
+                id: parse_uuid(&id),
+                title,
+                description: desc,
+                kind: serde_json::from_str(&kind).unwrap_or(TaskKind::Custom(kind.clone())),
+                status: parse_task_status(&status),
+                priority: parse_task_priority(&priority),
+                assigned_agent_id: assigned,
+                source_ref: src,
+                metadata: parse_json(&meta),
+                created_at: parse_dt(&ca),
+                updated_at: parse_dt(&ua),
+            }).collect()
+        };
+
+        let pending_handoffs = self.list_handoffs(&input.agent_id).await?;
+
+        self.emit(
+            Some(&input.agent_id),
+            Some(session.id),
+            "session.checked_in",
+            serde_json::json!({
+                "session_id": session.id,
+                "inbox_count": inbox.len(),
+                "pending_tasks": pending_tasks.len(),
+                "dead_sessions_swept": dead_sessions_swept,
+                "locks_expired": locks_expired,
+            }),
+        ).await;
+
+        Ok(CheckInResult {
+            session,
+            inbox,
+            pending_tasks,
+            pending_handoffs,
+            dead_sessions_swept,
+            locks_expired,
         })
     }
 
@@ -195,6 +331,16 @@ impl WorkspaceStorage for SqliteStorage {
             .await
             .map_err(|e| WorkspaceError::Storage(e.into()))?;
 
+        self.emit(
+            Some(&session.agent_id),
+            Some(input.session_id),
+            "session.checked_out",
+            serde_json::json!({
+                "session_id": input.session_id,
+                "created_handoff": input.create_handoff,
+            }),
+        ).await;
+
         Ok(())
     }
 
@@ -219,6 +365,29 @@ impl WorkspaceStorage for SqliteStorage {
             current_task_id: task_id.as_deref().map(|s| Uuid::parse_str(s).ok()).flatten(),
             metadata: parse_json(&meta),
         }))
+    }
+
+    async fn list_active_sessions(&self) -> Result<Vec<AgentSession>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String, Option<String>, String)>(
+            "SELECT id, agent_id, status, started_at, last_seen_at, ended_at, health, current_task_id, metadata
+             FROM agent_sessions WHERE status = 'active'
+             ORDER BY started_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(rows.into_iter().map(|(id, agent_id, status, sa, ls, ea, health, task_id, meta)| AgentSession {
+            id: parse_uuid(&id),
+            agent_id,
+            status: parse_session_status(&status),
+            started_at: parse_dt(&sa),
+            last_seen_at: parse_dt(&ls),
+            ended_at: ea.as_deref().map(parse_dt),
+            health: parse_session_health(&health),
+            current_task_id: task_id.as_deref().map(|s| Uuid::parse_str(s).ok()).flatten(),
+            metadata: parse_json(&meta),
+        }).collect())
     }
 
     async fn active_session(&self, agent_id: &str) -> Result<Option<AgentSession>> {
@@ -248,6 +417,18 @@ impl WorkspaceStorage for SqliteStorage {
     // ── Messages ──────────────────────────────────────────────────────────────
 
     async fn send_message(&self, input: SendMessageInput) -> Result<Message> {
+        // Validate recipient exists when specified.
+        if let Some(ref to) = input.to_agent_id {
+            let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM agents WHERE id = ?1")
+                .bind(to)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| WorkspaceError::Storage(e.into()))?;
+            if !exists {
+                return Err(WorkspaceError::NotFound(format!("agent '{to}' does not exist")));
+            }
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let payload = serde_json::to_string(&input.payload).unwrap_or_default();
@@ -288,7 +469,7 @@ impl WorkspaceStorage for SqliteStorage {
             }
         }
 
-        Ok(Message {
+        let msg = Message {
             id,
             workspace_id: input.workspace_id,
             channel_id: input.channel_id,
@@ -298,7 +479,46 @@ impl WorkspaceStorage for SqliteStorage {
             kind: input.kind,
             payload: input.payload,
             created_at: now,
-        })
+        };
+
+        self.emit(
+            Some(&msg.from_agent_id),
+            None,
+            "message.sent",
+            serde_json::json!({
+                "message_id": msg.id,
+                "to": msg.to_agent_id,
+                "kind": fmt_message_kind(&msg.kind),
+                "deliver_to_inbox": input.deliver_to_inbox,
+            }),
+        ).await;
+
+        Ok(msg)
+    }
+
+    async fn list_messages_for_agent(&self, agent_id: &str, limit: u32) -> Result<Vec<Message>> {
+        let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, String, Option<String>, String, String, String)>(
+            "SELECT id, workspace_id, channel_id, thread_id, from_agent_id, to_agent_id, kind, payload, created_at
+             FROM messages WHERE from_agent_id = ?1 OR to_agent_id = ?1
+             ORDER BY created_at DESC LIMIT ?2",
+        )
+        .bind(agent_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(rows.into_iter().map(|(id, ws, ch, th, from, to, kind, payload, ca)| Message {
+            id: parse_uuid(&id),
+            workspace_id: ws,
+            channel_id: ch,
+            thread_id: th.as_deref().map(parse_uuid),
+            from_agent_id: from,
+            to_agent_id: to,
+            kind: parse_message_kind(&kind),
+            payload: parse_json(&payload),
+            created_at: parse_dt(&ca),
+        }).collect())
     }
 
     async fn list_messages(&self, channel_id: &str, limit: u32) -> Result<Vec<Message>> {
@@ -355,19 +575,37 @@ impl WorkspaceStorage for SqliteStorage {
 
     async fn ack_inbox_item(&self, input: AckInboxItemInput) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        let status = fmt_inbox_status(&input.status);
 
-        sqlx::query(
-            "UPDATE inbox_items SET status = ?1, processed_at = ?2
-             WHERE id = ?3 AND target_agent_id = ?4",
-        )
-        .bind(status)
-        .bind(&now)
-        .bind(input.item_id.to_string())
-        .bind(&input.agent_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+        if input.status == InboxStatus::Failed {
+            // Increment retry_count. If still under max_retries, reset to pending
+            // so the item will be delivered again on the next check-in.
+            sqlx::query(
+                "UPDATE inbox_items
+                 SET retry_count = retry_count + 1,
+                     status = CASE WHEN retry_count + 1 < max_retries THEN 'pending' ELSE 'failed' END,
+                     processed_at = CASE WHEN retry_count + 1 >= max_retries THEN ?1 ELSE NULL END
+                 WHERE id = ?2 AND target_agent_id = ?3",
+            )
+            .bind(&now)
+            .bind(input.item_id.to_string())
+            .bind(&input.agent_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?;
+        } else {
+            let status = fmt_inbox_status(&input.status);
+            sqlx::query(
+                "UPDATE inbox_items SET status = ?1, processed_at = ?2
+                 WHERE id = ?3 AND target_agent_id = ?4",
+            )
+            .bind(status)
+            .bind(&now)
+            .bind(input.item_id.to_string())
+            .bind(&input.agent_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?;
+        }
 
         Ok(())
     }
@@ -450,9 +688,22 @@ impl WorkspaceStorage for SqliteStorage {
             )));
         }
 
-        self.get_task(input.task_id).await?.ok_or_else(|| {
+        let task = self.get_task(input.task_id).await?.ok_or_else(|| {
             WorkspaceError::NotFound(input.task_id.to_string())
-        })
+        })?;
+
+        self.emit(
+            Some(&input.agent_id),
+            None,
+            "task.claimed",
+            serde_json::json!({
+                "task_id": task.id,
+                "title": task.title,
+                "agent_id": input.agent_id,
+            }),
+        ).await;
+
+        Ok(task)
     }
 
     async fn update_task_status(&self, input: UpdateTaskStatusInput) -> Result<Task> {
@@ -495,6 +746,100 @@ impl WorkspaceStorage for SqliteStorage {
             created_at: parse_dt(&ca),
             updated_at: parse_dt(&ua),
         }).collect())
+    }
+
+    async fn list_tasks(&self, filter: ListTasksFilter) -> Result<Vec<Task>> {
+        let limit = filter.limit.unwrap_or(100) as i64;
+
+        // Build WHERE clauses dynamically.
+        let mut conditions: Vec<String> = Vec::new();
+        if filter.unassigned_only == Some(true) {
+            conditions.push("assigned_agent_id IS NULL".into());
+        } else if let Some(ref agent) = filter.assigned_to {
+            conditions.push(format!("assigned_agent_id = '{}'", agent.replace('\'', "''")));
+        }
+        if let Some(ref statuses) = filter.statuses {
+            if !statuses.is_empty() {
+                let vals: Vec<String> = statuses.iter()
+                    .map(|s| format!("'{}'", fmt_task_status(s)))
+                    .collect();
+                conditions.push(format!("status IN ({})", vals.join(",")));
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT id, title, description, kind, status, priority, assigned_agent_id, source_ref, metadata, created_at, updated_at
+             FROM tasks {where_clause}
+             ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, created_at ASC
+             LIMIT {limit}",
+        );
+
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, String, String, String)>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(rows.into_iter().map(|(id, title, desc, kind, status, priority, assigned, src, meta, ca, ua)| Task {
+            id: parse_uuid(&id),
+            title,
+            description: desc,
+            kind: serde_json::from_str(&kind).unwrap_or(TaskKind::Custom(kind.clone())),
+            status: parse_task_status(&status),
+            priority: parse_task_priority(&priority),
+            assigned_agent_id: assigned,
+            source_ref: src,
+            metadata: parse_json(&meta),
+            created_at: parse_dt(&ca),
+            updated_at: parse_dt(&ua),
+        }).collect())
+    }
+
+    async fn assign_task(&self, input: AssignTaskInput) -> Result<Task> {
+        let now = Utc::now().to_rfc3339();
+
+        let affected = sqlx::query(
+            "UPDATE tasks SET assigned_agent_id = ?1, status = CASE
+                WHEN ?1 IS NOT NULL AND status = 'open' THEN 'claimed'
+                WHEN ?1 IS NULL THEN 'open'
+                ELSE status
+             END, updated_at = ?2
+             WHERE id = ?3",
+        )
+        .bind(&input.assigned_to)
+        .bind(&now)
+        .bind(input.task_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?
+        .rows_affected();
+
+        if affected == 0 {
+            return Err(WorkspaceError::NotFound(input.task_id.to_string()));
+        }
+
+        let task = self.get_task(input.task_id).await?.ok_or_else(|| {
+            WorkspaceError::NotFound(input.task_id.to_string())
+        })?;
+
+        self.emit(
+            Some(&input.assigned_by),
+            None,
+            "task.assigned",
+            serde_json::json!({
+                "task_id": task.id,
+                "title": task.title,
+                "assigned_by": input.assigned_by,
+                "assigned_to": input.assigned_to,
+            }),
+        ).await;
+
+        Ok(task)
     }
 
     // ── Locks ─────────────────────────────────────────────────────────────────
@@ -792,5 +1137,81 @@ impl WorkspaceStorage for SqliteStorage {
             checked_at: parse_dt(&ca),
             updated_at: parse_dt(&ua),
         }).collect())
+    }
+
+    // ── Workspace summary ─────────────────────────────────────────────────────
+
+    async fn get_workspace_summary(&self) -> Result<WorkspaceSummary> {
+        // Active agents
+        let active_agents = {
+            let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String, String, String)>(
+                "SELECT id, name, role, capabilities, permissions, status, metadata, created_at, updated_at
+                 FROM agents WHERE status = 'active' ORDER BY name ASC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+            rows.into_iter().map(|(id, name, role, caps, perms, status, meta, ca, ua)| Agent {
+                id,
+                name,
+                role,
+                capabilities: parse_vec(&caps),
+                permissions: parse_vec(&perms),
+                status: parse_agent_status(&status),
+                metadata: parse_json(&meta),
+                created_at: parse_dt(&ca),
+                updated_at: parse_dt(&ua),
+            }).collect()
+        };
+
+        // Open tasks (not terminal)
+        let open_tasks = {
+            let rows = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, String, String, String)>(
+                "SELECT id, title, description, kind, status, priority, assigned_agent_id, source_ref, metadata, created_at, updated_at
+                 FROM tasks WHERE status NOT IN ('done', 'failed', 'cancelled')
+                 ORDER BY priority DESC, created_at ASC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+            rows.into_iter().map(|(id, title, desc, kind, status, priority, assigned, src, meta, ca, ua)| Task {
+                id: parse_uuid(&id),
+                title,
+                description: desc,
+                kind: serde_json::from_str(&kind).unwrap_or(TaskKind::Custom(kind.clone())),
+                status: parse_task_status(&status),
+                priority: parse_task_priority(&priority),
+                assigned_agent_id: assigned,
+                source_ref: src,
+                metadata: parse_json(&meta),
+                created_at: parse_dt(&ca),
+                updated_at: parse_dt(&ua),
+            }).collect()
+        };
+
+        let pending_inbox_total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM inbox_items WHERE status IN ('pending', 'processing')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let now_str = Utc::now().to_rfc3339();
+        let active_locks_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM locks WHERE expires_at > ?1",
+        )
+        .bind(&now_str)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(WorkspaceSummary {
+            active_agents,
+            open_tasks,
+            pending_inbox_total: pending_inbox_total as u64,
+            active_locks_count: active_locks_count as u64,
+        })
     }
 }

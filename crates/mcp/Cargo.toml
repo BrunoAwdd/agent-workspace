@@ -21,3 +21,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 dotenvy.workspace = true
 rmcp.workspace = true
+schemars.workspace = true

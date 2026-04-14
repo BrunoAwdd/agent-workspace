@@ -1,0 +1,5 @@
+[env]
+# The rmcp ToolRouter creates deeply nested generic types — one layer per tool.
+# Without this, rustc's trait solver overflows the thread stack during
+# monomorphization and dies with SIGSEGV. 32 MB is enough headroom for ~30 tools.
+RUST_MIN_STACK = "33554432"

@@ -27,14 +27,16 @@ impl WorkspaceStorage for PostgresStorage {
     async fn get_agent(&self, _agent_id: &str) -> Result<Option<Agent>> { todo!("postgres: get_agent") }
     async fn list_agents(&self) -> Result<Vec<Agent>> { todo!("postgres: list_agents") }
 
-    async fn check_in(&self, _input: CheckInInput) -> Result<AgentSession> { todo!("postgres: check_in") }
+    async fn check_in(&self, _input: CheckInInput) -> Result<CheckInResult> { todo!("postgres: check_in") }
     async fn heartbeat(&self, _input: HeartbeatInput) -> Result<AgentSession> { todo!("postgres: heartbeat") }
     async fn check_out(&self, _input: CheckOutInput) -> Result<()> { todo!("postgres: check_out") }
     async fn get_session(&self, _session_id: Uuid) -> Result<Option<AgentSession>> { todo!("postgres: get_session") }
     async fn active_session(&self, _agent_id: &str) -> Result<Option<AgentSession>> { todo!("postgres: active_session") }
+    async fn list_active_sessions(&self) -> Result<Vec<AgentSession>> { todo!("postgres: list_active_sessions") }
 
     async fn send_message(&self, _input: SendMessageInput) -> Result<Message> { todo!("postgres: send_message") }
     async fn list_messages(&self, _channel_id: &str, _limit: u32) -> Result<Vec<Message>> { todo!("postgres: list_messages") }
+    async fn list_messages_for_agent(&self, _agent_id: &str, _limit: u32) -> Result<Vec<Message>> { todo!("postgres: list_messages_for_agent") }
 
     async fn list_inbox(&self, _agent_id: &str) -> Result<Vec<InboxItem>> { todo!("postgres: list_inbox") }
     async fn ack_inbox_item(&self, _input: AckInboxItemInput) -> Result<()> { todo!("postgres: ack_inbox_item") }
@@ -44,6 +46,10 @@ impl WorkspaceStorage for PostgresStorage {
     async fn claim_task(&self, _input: ClaimTaskInput) -> Result<Task> { todo!("postgres: claim_task") }
     async fn update_task_status(&self, _input: UpdateTaskStatusInput) -> Result<Task> { todo!("postgres: update_task_status") }
     async fn list_tasks_for_agent(&self, _agent_id: &str) -> Result<Vec<Task>> { todo!("postgres: list_tasks_for_agent") }
+    async fn list_tasks(&self, _filter: ListTasksFilter) -> Result<Vec<Task>> { todo!("postgres: list_tasks") }
+    async fn assign_task(&self, _input: AssignTaskInput) -> Result<Task> { todo!("postgres: assign_task") }
+
+    async fn sweep_dead_sessions(&self, _timeout_secs: u64) -> Result<u64> { todo!("postgres: sweep_dead_sessions") }
 
     async fn acquire_lock(&self, _input: AcquireLockInput) -> Result<Lock> { todo!("postgres: acquire_lock") }
     async fn renew_lock(&self, _input: RenewLockInput) -> Result<Lock> { todo!("postgres: renew_lock") }
@@ -59,4 +65,6 @@ impl WorkspaceStorage for PostgresStorage {
     async fn upsert_dependency(&self, _input: UpsertDependencyInput) -> Result<Dependency> { todo!("postgres: upsert_dependency") }
     async fn get_dependency(&self, _key: &str) -> Result<Option<Dependency>> { todo!("postgres: get_dependency") }
     async fn list_dependencies(&self) -> Result<Vec<Dependency>> { todo!("postgres: list_dependencies") }
+
+    async fn get_workspace_summary(&self) -> Result<WorkspaceSummary> { todo!("postgres: get_workspace_summary") }
 }
