@@ -56,7 +56,16 @@ async fn main() -> Result<()> {
     // Spawn background maintenance — runs every 60s regardless of agent activity.
     tokio::spawn(maintenance_loop(Arc::clone(&storage)));
 
-    let state = aw_api::state::AppState::new(storage);
+    let state = match std::env::var("JWT_SECRET") {
+        Ok(secret) => {
+            tracing::info!("auth: JWT enabled (HS256)");
+            aw_api::state::AppState::new(storage).with_jwt(secret)
+        }
+        Err(_) => {
+            tracing::warn!("auth: JWT_SECRET not set — running without authentication");
+            aw_api::state::AppState::new(storage)
+        }
+    };
 
     let port: u16 = std::env::var("PORT")
         .ok()

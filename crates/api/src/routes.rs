@@ -1,19 +1,19 @@
-use axum::{routing::{delete, get, post}, Router};
+use axum::{middleware, routing::{delete, get, post}, Router};
 
 use crate::{
+    auth,
     handlers::{agents, dependencies, events, handoffs, inbox, locks, messages, sessions, summary, tasks},
     state::AppState,
 };
 use tower_http::cors::{Any, CorsLayer};
 
 pub fn build(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(health))
+    let protected = Router::new()
         // Agents
         .route("/agents",     get(agents::list_agents).post(agents::create_agent))
         .route("/agents/:id", get(agents::get_agent))
         // Sessions
-        .route("/sessions/active",   get(sessions::list_active))
+        .route("/sessions/active",    get(sessions::list_active))
         .route("/sessions/check-in",  post(sessions::check_in))
         .route("/sessions/heartbeat", post(sessions::heartbeat))
         .route("/sessions/check-out", post(sessions::check_out))
@@ -40,6 +40,11 @@ pub fn build(state: AppState) -> Router {
         .route("/dependencies/:key", get(dependencies::get_dependency))
         // Summary
         .route("/summary", get(summary::get_summary))
+        .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_auth));
+
+    Router::new()
+        .route("/health", get(health))
+        .merge(protected)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
