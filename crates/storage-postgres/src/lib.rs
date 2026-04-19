@@ -19,6 +19,12 @@ pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
         .await
         .context("failed to connect to postgres")?;
 
+    // Ensure pgcrypto is available (provides gen_random_uuid on Postgres < 13).
+    sqlx::raw_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA public")
+        .execute(&pool)
+        .await
+        .context("pgcrypto install failed")?;
+
     migrate(&pool).await?;
     Ok(pool)
 }
@@ -33,7 +39,7 @@ pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
 pub async fn connect_test(url: &str) -> anyhow::Result<(PgPool, String)> {
     let schema = format!("test_{}", uuid::Uuid::new_v4().simple());
 
-    // Create schema using a one-off connection.
+    // Create schema using a one-off admin connection.
     let mut admin = sqlx::PgConnection::connect(url)
         .await
         .context("admin connect failed")?;
@@ -43,13 +49,14 @@ pub async fn connect_test(url: &str) -> anyhow::Result<(PgPool, String)> {
         .context("create schema failed")?;
 
     // Build a pool that always sets search_path to the new schema.
+    // Include public so extensions (pgcrypto, uuid-ossp) installed there remain visible.
     let schema_clone = schema.clone();
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .after_connect(move |conn, _| {
             let s = schema_clone.clone();
             Box::pin(async move {
-                conn.execute(format!("SET search_path = {s}").as_str())
+                conn.execute(format!("SET search_path = {s}, public").as_str())
                     .await?;
                 Ok(())
             })

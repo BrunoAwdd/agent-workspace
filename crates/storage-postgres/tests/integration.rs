@@ -8,31 +8,56 @@
 //!   cargo test -p aw-storage-postgres
 
 use aw_storage_postgres::PostgresStorage;
-use tokio::sync::OnceCell;
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::{runners::AsyncRunner, ContainerAsync};
 use testcontainers_modules::postgres::Postgres;
+use tokio::sync::OnceCell;
 
+// Container + base URL shared across all parallel tests.
+static BASE_URL: OnceCell<String> = OnceCell::const_new();
 static CONTAINER: OnceCell<ContainerAsync<Postgres>> = OnceCell::const_new();
 
-async fn pg_port() -> u16 {
-    let container = CONTAINER
+/// Start the container once and install extensions. Returns the base URL.
+async fn base_url() -> &'static str {
+    BASE_URL
         .get_or_init(|| async {
-            Postgres::default()
-                .start()
+            let container = CONTAINER
+                .get_or_init(|| async {
+                    Postgres::default()
+                        .start()
+                        .await
+                        .expect("failed to start Postgres container")
+                })
+                .await;
+
+            let port = container
+                .get_host_port_ipv4(5432)
                 .await
-                .expect("failed to start Postgres container")
+                .expect("failed to get container port");
+
+            let url = format!("postgresql://postgres:postgres@127.0.0.1:{port}/postgres");
+
+            // Install pgcrypto once — avoids concurrent CREATE EXTENSION races
+            // when tests run in parallel.
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&url)
+                .await
+                .expect("admin connect failed");
+            sqlx::Executor::execute(
+                &pool,
+                "CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA public",
+            )
+            .await
+            .expect("pgcrypto install failed");
+
+            url
         })
-        .await;
-    container
-        .get_host_port_ipv4(5432)
         .await
-        .expect("failed to get container port")
 }
 
 async fn make_storage() -> PostgresStorage {
-    let port = pg_port().await;
-    let base_url = format!("postgresql://postgres:postgres@127.0.0.1:{}/postgres", port);
-    let (pool, _schema) = aw_storage_postgres::connect_test(&base_url)
+    let url = base_url().await;
+    let (pool, _schema) = aw_storage_postgres::connect_test(url)
         .await
         .expect("failed to create isolated postgres schema");
     PostgresStorage::new(pool)
