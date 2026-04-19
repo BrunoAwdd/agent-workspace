@@ -3,6 +3,7 @@ members = [
     "crates/domain",
     "crates/storage-sqlite",
     "crates/storage-postgres",
+    "crates/storage-tests",
     "crates/mcp",
     "crates/api",
 ]

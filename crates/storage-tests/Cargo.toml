@@ -1,0 +1,11 @@
+[package]
+name = "aw-storage-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+aw-domain = { path = "../domain" }
+serde_json.workspace = true
+uuid.workspace = true
+tokio.workspace = true

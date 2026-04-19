@@ -1,0 +1,131 @@
+# agent-workspace-sdk
+
+Python SDK for connecting AI agents to the [Agent Workspace](https://github.com/agent-workspace) coordination hub.
+
+## Requirements
+
+- Python 3.10+
+- Agent Workspace API running (default: `http://localhost:4000`)
+
+## Install
+
+```bash
+pip install agent-workspace-sdk
+# or from source:
+pip install -e ./agent-workspace-sdk
+```
+
+## Quick start
+
+```python
+import asyncio
+from agent_workspace import WorkspaceClient
+
+async def main():
+    client = WorkspaceClient(
+        base_url="http://localhost:4000",
+        token="eyJhbGci...",   # omit in dev mode (no auth)
+        agent_id="analyst-1",
+    )
+
+    # Register once — idempotent, safe to call every startup
+    await client.register(
+        name="BTC Analyst",
+        role="analyst",
+        capabilities=["market_analysis"],
+        permissions=[],
+    )
+
+    # Run a session — check-out is automatic, even on exception
+    async with client.session() as session:
+        # Inbox, pending tasks and handoffs are pre-loaded
+        for task in session.pending_tasks:
+            print(f"Resuming: {task.title}")
+
+        task = await session.claim_task("some-uuid")
+        # ... do work ...
+        await session.update_task_status(task.id, "done")
+        await session.send_message(
+            to_agent_id="coordinator",
+            kind="status_update",
+            payload={"result": "analysis complete"},
+        )
+
+asyncio.run(main())
+```
+
+## Manual session control
+
+```python
+session = await client.check_in()
+try:
+    await session.claim_task(task_id)
+    # ... work ...
+finally:
+    await session.check_out(
+        create_handoff=True,
+        summary="Processed BTC data",
+        payload={"last_price": 95000},
+    )
+```
+
+## Heartbeat
+
+Heartbeat is **automatic** (every 45 s). To disable:
+
+```python
+client = WorkspaceClient(..., auto_heartbeat=False)
+# or adjust interval:
+client = WorkspaceClient(..., heartbeat_interval_secs=30)
+```
+
+## Error handling
+
+```python
+from agent_workspace import LockConflictError, TaskConflictError, NotFoundError
+
+try:
+    lock = await session.acquire_lock("document", "doc-42")
+except LockConflictError:
+    print("Resource is locked by another agent")
+```
+
+| Exception           | HTTP    | When                 |
+| ------------------- | ------- | -------------------- |
+| `AuthError`         | 401     | Missing/invalid JWT  |
+| `ForbiddenError`    | 403     | Insufficient scope   |
+| `NotFoundError`     | 404     | Resource not found   |
+| `LockConflictError` | 409     | Lock already held    |
+| `TaskConflictError` | 409     | Task already claimed |
+| `WorkspaceError`    | 4xx/5xx | Generic fallback     |
+
+## API reference
+
+All operations live on the `session` object after `check_in()`:
+
+```python
+# Messages
+await session.send_message(to_agent_id, kind, payload, deliver_to_inbox)
+items = await session.list_inbox()
+await session.ack(item_id, status="done")
+
+# Tasks
+task  = await session.create_task(title, description, kind, priority)
+task  = await session.claim_task(task_id)
+tasks = await session.list_tasks(status=["open"], unassigned_only=False)
+task  = await session.update_task_status(task_id, "done")
+task  = await session.assign_task(task_id, assigned_to="other-agent")
+
+# Locks
+lock = await session.acquire_lock("document", "doc-42", lock_type="write_lock", ttl_secs=300)
+await session.release_lock(lock.id)
+
+# Handoffs
+await session.create_handoff(summary="...", to_agent_id="coord", payload={})
+handoffs = await session.list_handoffs()
+
+# Workspace-level (no session needed)
+summary = await client.get_summary()
+events  = await client.list_events(agent_id="analyst-1", limit=50)
+agents  = await client.list_agents()
+```
