@@ -120,6 +120,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aw-domain",
+ "aw-storage-postgres",
  "aw-storage-sqlite",
  "chrono",
  "dotenvy",

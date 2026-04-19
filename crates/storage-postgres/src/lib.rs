@@ -6,6 +6,7 @@
 //! Status: schema + connection ready; query implementation pending.
 
 mod adapter;
+mod rows;
 
 pub use adapter::PostgresStorage;
 
