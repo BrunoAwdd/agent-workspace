@@ -1,9 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 body {
   margin: 0;
+  background-color: #0d1117;
   font-family:
     system-ui,
     -apple-system,

@@ -1,0 +1,3 @@
+agent-workspace-sdk
+asyncio
+httpx

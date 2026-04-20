@@ -3,6 +3,8 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="Version 0.1.0"/> [![CI](https://github.com/BrunoAwdd/agent-workspace/actions/workflows/ci.yml/badge.svg)](https://github.com/BrunoAwdd/agent-workspace/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+  <br/>
   <strong>A shared coordination runtime for multi-agent systems.</strong><br>
   <em>Tasks, inboxes, locks, handoffs, and traceable collaboration for your AI fleet.</em>
 </p>

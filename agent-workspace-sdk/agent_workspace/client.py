@@ -140,7 +140,7 @@ class WorkspaceClient:
         in parallel so the session object is fully populated on return.
         """
         raw = await self._post("/sessions/check-in", {"agent_id": self._agent_id})
-        session_data = AgentSessionData.model_validate(raw)
+        session_data = AgentSessionData.model_validate(raw.get("session", raw))
 
         # Enrich in parallel
         inbox_fut = self._get(f"/inbox/{self._agent_id}")

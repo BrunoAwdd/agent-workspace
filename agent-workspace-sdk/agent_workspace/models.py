@@ -35,7 +35,7 @@ class AgentSessionData(BaseModel):
     status: str
     health: str | None = None
     current_task_id: UUID | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] | None = Field(default_factory=dict)
     started_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
     ended_at: datetime | None = None
@@ -52,14 +52,15 @@ class Message(BaseModel):
     from_agent_id: str
     to_agent_id: str | None = None
     kind: str
-    payload: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] | None = Field(default_factory=dict)
     deliver_to_inbox: bool = False
     sent_at: datetime | None = None
 
 
 class InboxItem(BaseModel):
     id: UUID
-    agent_id: str
+    target_agent_id: str
+    source_agent_id: str | None = None
     message_id: UUID | None = None
     status: str
     message: Message | None = None
@@ -76,12 +77,12 @@ class Task(BaseModel):
     id: UUID | None = None
     title: str
     description: str | None = None
-    kind: str
+    kind: Any
     priority: str = "normal"
     status: str = "open"
     assigned_agent_id: str | None = None
     claimed_by_session_id: UUID | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] | None = Field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -115,7 +116,7 @@ class Handoff(BaseModel):
     source_session_id: UUID | None = None
     task_id: UUID | None = None
     summary: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] | None = Field(default_factory=dict)
     created_at: datetime | None = None
 
 
@@ -143,7 +144,7 @@ class Event(BaseModel):
     agent_id: str | None = None
     session_id: UUID | None = None
     task_id: UUID | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] | None = Field(default_factory=dict)
     created_at: datetime | None = None
 
 
