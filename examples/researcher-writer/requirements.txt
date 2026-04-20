@@ -1,0 +1,2 @@
+# Local path to the workspace SDK
+-e ../../agent-workspace-sdk

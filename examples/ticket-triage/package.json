@@ -1,0 +1,14 @@
+{
+  "name": "ticket-triage-example",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@agent-workspace/sdk": "file:../../agent-workspace-sdk-ts"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  }
+}

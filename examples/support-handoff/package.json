@@ -1,0 +1,14 @@
+{
+  "name": "support-handoff-example",
+  "version": "1.0.0",
+  "scripts": {
+    "start:l1": "ts-node l1_support.ts"
+  },
+  "dependencies": {
+    "@agent-workspace/sdk": "file:../../agent-workspace-sdk-ts"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  }
+}
