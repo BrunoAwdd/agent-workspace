@@ -3,88 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agent Workspace Control</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <title>Agent Workspace Dashboard</title>
   </head>
-  <body>
-    <div class="dashboard">
-      <header>
-        <div class="logo">AGENT_WORKSPACE</div>
-        <div class="status-badge">
-          <span class="pulse">●</span> SYSTEM ONLINE
-        </div>
-      </header>
-
-      <aside class="sidebar">
-        <div class="panel" style="flex: 1">
-          <div class="panel-header">
-            <span>Active Agents</span>
-            <span id="agent-count">0</span>
-          </div>
-          <div class="panel-content" id="agent-list">
-            <!-- Agents injected here -->
-          </div>
-        </div>
-        <div class="panel" style="flex: 1">
-          <div class="panel-header">
-            <span>Dependencies</span>
-          </div>
-          <div class="panel-content" id="dependency-list">
-            <!-- Dependencies injected here -->
-          </div>
-        </div>
-      </aside>
-
-      <main>
-        <div class="map-view">
-          <div class="mission-panel" id="mission-status">
-            <h2><span class="pulse">⚠</span> OPERATION: PHANTOM_LEDGER</h2>
-            <div class="mission-data">
-              <p>PHASE: <span id="mission-phase">STANDBY</span></p>
-              <p>TARGET: <span id="mission-target">BLOCK 840217</span></p>
-              <p>KEY: <span id="mission-key">***_****_*****</span></p>
-              <div
-                style="
-                  margin-top: 10px;
-                  border-top: 1px solid var(--accent-color);
-                  padding-top: 8px;
-                "
-              >
-                <p>MESSAGES: <span id="agent-msg-count">0</span></p>
-              </div>
-            </div>
-          </div>
-          <div style="text-align: center; opacity: 0.2; pointer-events: none">
-            <p style="font-size: 5rem; font-weight: 800; letter-spacing: 0.2em">
-              HQ
-            </p>
-          </div>
-        </div>
-      </main>
-
-      <aside class="sidebar">
-        <div class="panel" style="height: 100%">
-          <div class="panel-header">
-            <span>Job Queue / Tasks</span>
-          </div>
-          <div class="panel-content" id="task-list">
-            <!-- Tasks injected here -->
-          </div>
-        </div>
-      </aside>
-
-      <section class="console" id="console-output">
-        <div class="console-line">
-          <span class="console-timestamp">[15:35:00]</span>
-          <span>Initializing secure connection to agent-workspace core...</span>
-        </div>
-      </section>
-    </div>
-    <script type="module" src="/src/main.js"></script>
+  <body class="bg-[#0D1117] text-white antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
