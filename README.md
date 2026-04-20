@@ -18,8 +18,7 @@
 
 <p align="center">
   <kbd>
-    <!-- TODO: Insert your 60-second demo GIF here -->
-    <img src="https://placehold.co/800x400/1e1e1e/white?text=Watch+3+agents+coordinate+in+under+60+seconds+(Demo+GIF+here)" alt="Agent Workspace Demo" width="800">
+    <img src="assets/demo.gif" alt="Watch 3 agents coordinate through tasks, inboxes, locks, and handoffs in under 60 seconds." width="800">
   </kbd>
 </p>
 
