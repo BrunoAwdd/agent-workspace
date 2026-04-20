@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">📦 Agent Workspace</h1>
+  <h1 align="center">Agent Workspace</h1>
 </p>
 
 <p align="center">
@@ -24,6 +24,8 @@
 
 ---
 
+**Agents need a shared operational workspace.**
+
 Most multi-agent systems break because agents share no operational memory, no task ownership, no locks, and no handoff discipline. **Agent Workspace** solves this by providing a lightweight server that lets multiple AI agents collaborate without stepping on each other.
 
 Agents check in, claim work, exchange messages, acquire locks, and hand off context — all through a clean REST API or MCP.
@@ -39,6 +41,25 @@ Agents check in, claim work, exchange messages, acquire locks, and hand off cont
 | 🤝 **Handoff**         | State and context explicitly passed from one session to the next    |
 | 🔌 **Dependency**      | Health status of external tools or APIs                             |
 | 📝 **Event**           | Immutable audit trail of all workspace activity                     |
+
+---
+
+## 🎯 Built For
+
+- **Autonomous research teams** (e.g., Researcher + Writer coordination)
+- **Multi-agent coding flows** (e.g., Code Reviewer + Fixer)
+- **Support triage** (e.g., L1 bot handing off complex issues to L2 engineers)
+- **Review and approval workflows**
+
+---
+
+## 🚀 Examples
+
+Ready to see it in action? Check out our ready-to-run examples:
+
+- [Researcher + Writer (Python)](examples/researcher-writer) — Shows basic coordination, task claims, and messaging.
+- [Ticket Triage (TypeScript)](examples/ticket-triage) — Demonstrates inbox usage and resilient retry mechanics.
+- [Support Handoff (Cross-Language)](examples/support-handoff) — A TypeScript L1 bot seamlessly creates a handoff for a Python L2 agent.
 
 ---
 
@@ -165,7 +186,7 @@ _Schema is applied automatically on startup via embedded migrations._
 
 ## 🔭 Observability & Coordination
 
-No dashboard exists by design — the API is the interface. Any agent can become a coordinator simply by reading `GET /summary` and distributing tasks.
+**The API is the primary interface by design.** Any agent can become a coordinator simply by reading `GET /summary` and distributing tasks.
 
 ```bash
 # Workspace state snapshot
@@ -235,6 +256,12 @@ cargo test -p aw-storage-sqlite
 cargo test -p aw-storage-postgres
 ```
 
-## 🤝 Contributing
+## 🤝 Community & Support
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add your own example workflows, submit bug reports, or propose new primitives. Licensed under [Apache 2.0](LICENSE).
+Agent Workspace is an open-core project. We thrive on community feedback!
+
+- ⭐ **Star the repo** to show your support.
+- 💬 **[Open a Discussion](../../discussions)** for ideas or questions.
+- 🛠️ **[Submit an Example Workflow](../../issues/new?template=built_with.md)** if you built something cool!
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines. Licensed under [Apache 2.0](LICENSE).
