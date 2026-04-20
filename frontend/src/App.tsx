@@ -14,6 +14,7 @@ import {
   X,
   List,
   ActivitySquare,
+  MessageSquare,
 } from "lucide-react";
 
 interface Agent {
@@ -45,6 +46,16 @@ interface EventItem {
   created_at: string;
 }
 
+interface MessageItem {
+  id: string;
+  workspace_id: string;
+  from_agent_id: string | null;
+  to_agent_id: string | null;
+  kind: string;
+  payload: any;
+  created_at: string;
+}
+
 interface Summary {
   active_agents: Agent[];
   open_tasks: Task[];
@@ -56,30 +67,34 @@ export default function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
+  const [messages, setMessages] = useState<MessageItem[]>([]);
   const [error, setError] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "tasks" | "events">(
-    "overview",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "tasks" | "messages" | "events"
+  >("overview");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [sumRes, tasksRes, eventsRes] = await Promise.all([
+        const [sumRes, tasksRes, eventsRes, msgsRes] = await Promise.all([
           fetch("http://localhost:4000/summary"),
           fetch("http://localhost:4000/tasks?limit=50"),
           fetch("http://localhost:4000/events?limit=50"),
+          fetch("http://localhost:4000/messages?channel_id=main&limit=50"),
         ]);
 
-        if (sumRes.ok && tasksRes.ok && eventsRes.ok) {
+        if (sumRes.ok && tasksRes.ok && eventsRes.ok && msgsRes.ok) {
           setSummary(await sumRes.json());
 
           const tData = await tasksRes.json();
-          // Extract items depending on if wrapped
           setAllTasks(tData.items || tData);
 
           const eData = await eventsRes.json();
           setEvents(eData.items || eData);
+
+          const mData = await msgsRes.json();
+          setMessages(mData.items || mData);
 
           setError(false);
         } else {
@@ -131,14 +146,21 @@ export default function App() {
             onClick={() => setActiveTab("tasks")}
             icon={<List size={14} />}
           >
-            Tasks Explorer
+            Local Tasks
+          </TabButton>
+          <TabButton
+            active={activeTab === "messages"}
+            onClick={() => setActiveTab("messages")}
+            icon={<MessageSquare size={14} />}
+          >
+            Global Messages
           </TabButton>
           <TabButton
             active={activeTab === "events"}
             onClick={() => setActiveTab("events")}
             icon={<ActivitySquare size={14} />}
           >
-            Event Stream
+            Audit Log
           </TabButton>
         </div>
 
@@ -165,6 +187,7 @@ export default function App() {
         {activeTab === "tasks" && (
           <TasksTab tasks={allTasks} onInspectTask={setSelectedTask} />
         )}
+        {activeTab === "messages" && <MessagesTab messages={messages} />}
         {activeTab === "events" && <EventsTab events={events} />}
       </main>
 
@@ -423,13 +446,63 @@ function TasksTab({ tasks, onInspectTask }: any) {
   );
 }
 
+function MessagesTab({ messages }: any) {
+  return (
+    <div className="animate-in fade-in duration-300 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-lg font-semibold text-white">
+          Global Message Stream
+        </h2>
+        <div className="text-xs text-gray-400 font-mono">
+          {messages.length} messages
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {messages.map((msg: any) => (
+          <div
+            key={msg.id}
+            className="p-5 border border-gray-800 bg-[#161B22] rounded-xl relative overflow-hidden shadow-sm"
+          >
+            <div className="absolute top-0 left-0 w-1 h-full bg-blue-500/50"></div>
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-black/40 border border-gray-800 rounded-lg">
+                  <MessageSquare size={16} className="text-blue-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-gray-200">
+                    {msg.from_agent_id || "System"}{" "}
+                    <span className="text-gray-500 font-normal mx-1">➜</span>{" "}
+                    {msg.to_agent_id || "Broadcast"}
+                  </h3>
+                  <p className="text-[10px] text-gray-500 font-mono tracking-wide uppercase mt-0.5">
+                    Kind: {String(msg.kind)}
+                  </p>
+                </div>
+              </div>
+              <span className="text-[10px] text-gray-500 font-mono">
+                {new Date(msg.created_at).toLocaleTimeString()}
+              </span>
+            </div>
+
+            <div className="bg-black/50 border border-gray-800 rounded-lg p-3 overflow-x-auto">
+              <pre className="text-xs font-mono text-gray-300">
+                {JSON.stringify(msg.payload, null, 2)}
+              </pre>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EventsTab({ events }: any) {
   return (
     <div className="animate-in fade-in duration-300 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold text-white">
-          Live Operations Feed
-        </h2>
+        <h2 className="text-lg font-semibold text-white">Audit Log (Events)</h2>
         <div className="text-xs text-gray-400 font-mono">
           Tailing latest {events.length}
         </div>
