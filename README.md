@@ -258,7 +258,9 @@ cargo test -p aw-storage-postgres
 
 ## 🤝 Community & Support
 
-Agent Workspace is an open-core project. We thrive on community feedback!
+**Agent Workspace is open source and self-hostable.** The open-source edition is intended to remain fully usable for real development and deployments. Future enterprise offerings will focus on governance, security, and organizational controls. See [PLANS.md](PLANS.md) for our product direction.
+
+We thrive on community feedback!
 
 - ⭐ **Star the repo** to show your support.
 - 💬 **[Open a Discussion](../../discussions)** for ideas or questions.

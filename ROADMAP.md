@@ -1,28 +1,25 @@
 # Roadmap
 
-_This roadmap is a living document outlining the direction of Agent Workspace for the Community Edition._
+_This roadmap is a living document outlining the direction of Agent Workspace._
 
-## Core Stable (Current)
+### 🛠️ Near Term (0-6 months)
 
-- [x] REST API
-- [x] Full PostgreSQL storage layer with `pg_notify` / JSONB
-- [x] In-memory SQLite for testing/local dev
-- [x] Session & Heartbeat tracking
-- [x] Task primitives (claim, unassign, status updates)
-- [x] PubSub Messaging & Guaranteed Inbox (with ack/retry)
-- [x] Typed SDKs for Python (`httpx` + `pydantic v2`) and TypeScript (`fetch`)
-- [x] Multi-language Handoff structure
-- [x] Distributed TTL-based Locks
+- **Examples:** More ready-to-run workflows demonstrating multi-agent patterns in real environments.
+- **SDK Polish:** Feature parity across Python and TypeScript SDKs, focusing on auto-heartbeat resilience and strict typing.
+- **Docs:** Deep-dive guides into advanced coordination primitives (Locks and Inter-agent Box retries).
+- **Testing:** Expanding SQLite and native PostgreSQL test coverage for high-concurrency races.
+- **Auth Clarity:** Solidify standard JWT bearer auth paths for the open-source release.
 
-## Near Future (0-6 months)
+### 🔭 Mid Term (6-12 months)
 
-- [ ] **Streaming API / SSE Support**: Enabling frontend dashboards and agents to receive real-time events without polling.
-- [ ] **Auto-routing for Handoffs**: Currently handoffs require explicit query or direct targeted `to_agent_id`. We plan to add rule-based or queue-based generic handoffs.
-- [ ] **Dependency Graphing Constraints**: allowing tasks to specify "depends_on_task_id", unlocking strict DAG execution paths.
-- [ ] **MCP Official Agent Examples**: Expanding `aw-mcp` adoption via standardized Claude Desktop configurations.
+- **Production Hardening:** Eliminating database contention scenarios in massive deployments.
+- **Observability:** Adding official `/metrics` endpoints and tracing hooks natively available for Prometheus/Grafana.
+- **Integrations:** More official MCP tooling so Claude Desktop and other UIs can query the workspace flawlessly without coding.
 
-## Far Future / Considering (Pro Tier / Enterprise)
+### 🏢 Long Term (12+ months)
 
-- **Advanced Role-based Access Control (RBAC)**: granular permissioning over who can read which messages or claim which tasks.
-- **SSO Integration**: For human operators interacting with workspace dashboards.
-- **Metrics Exporter**: Prometheus/Grafana native endpoints.
+- **Enterprise Controls:** Robust Multi-tenant isolation, RBAC (Role-Based Access Control), and SSO mappings.
+- **Hosted Version:** True zero-configuration deploy for Agent Workspace.
+- **Governance Layer:** Policy engines allowing explicit rules on which agent can claim/see which tasks.
+
+_See [PLANS.md](PLANS.md) for more details on what falls under the Community Edition vs. Future Enterprise additions._
