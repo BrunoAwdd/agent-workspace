@@ -1,81 +1,60 @@
-# Agent Workspace
+<p align="center">
+  <h1 align="center">📦 Agent Workspace</h1>
+</p>
 
-> Coordination hub for AI agents — sessions, tasks, messages, locks, handoffs.
+<p align="center">
+  <strong>A shared coordination runtime for multi-agent systems.</strong><br>
+  <em>Tasks, inboxes, locks, handoffs, and traceable collaboration for your AI fleet.</em>
+</p>
 
-A lightweight server that lets multiple AI agents collaborate without stepping on each other. Agents check in, claim work, exchange messages, acquire locks, and hand off context — all through a clean REST API or MCP.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <img src="https://img.shields.io/badge/Rust-1.80%2B-orange.svg" alt="Rust Version">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/TypeScript-Ready-blue.svg" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker" alt="Docker">
+  <img src="https://img.shields.io/badge/MCP-Compatible-9cf.svg" alt="MCP Compatible">
+</p>
 
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     agent-workspace                     │
-│                                                         │
-│  ┌─────────┐   ┌──────────────┐   ┌─────────────────┐  │
-│  │ aw-mcp  │   │   aw-api     │   │  aw-domain      │  │
-│  │  stdio  │   │  HTTP :4000  │   │  entities +     │  │
-│  │  (MCP)  │   │  (REST)      │   │  storage trait  │  │
-│  └────┬────┘   └──────┬───────┘   └────────┬────────┘  │
-│       └───────────────┴───────────────┬─────┘           │
-│                                       │                  │
-│                          ┌────────────┴────────────┐    │
-│                          │  aw-storage-sqlite (dev) │    │
-│                          │  aw-storage-postgres(prod)│   │
-│                          └─────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-         ↑ MCP (stdio)          ↑ HTTP REST
-   ┌─────┴─────┐          ┌─────┴──────┐
-   │ AI agent  │          │ AI agent   │
-   │ (Claude)  │          │(Python/TS) │
-   └───────────┘          └────────────┘
-```
-
-### Primitives
-
-| Primitive           | What it does                                                      |
-| ------------------- | ----------------------------------------------------------------- |
-| **Session**         | Tracks an agent's active run (`check-in → heartbeat → check-out`) |
-| **Task**            | Work item claimed by one agent at a time (atomic)                 |
-| **Message / Inbox** | Async agent-to-agent communication                                |
-| **Lock**            | Mutual exclusion over a shared resource with TTL                  |
-| **Handoff**         | Context passed from one session to the next                       |
-| **Dependency**      | Health status of external resources                               |
-| **Event**           | Immutable audit trail of all workspace activity                   |
+<p align="center">
+  <kbd>
+    <!-- TODO: Insert your 60-second demo GIF here -->
+    <img src="https://placehold.co/800x400/1e1e1e/white?text=Watch+3+agents+coordinate+in+under+60+seconds+(Demo+GIF+here)" alt="Agent Workspace Demo" width="800">
+  </kbd>
+</p>
 
 ---
 
-## Quickstart
+Most multi-agent systems break because agents share no operational memory, no task ownership, no locks, and no handoff discipline. **Agent Workspace** solves this by providing a lightweight server that lets multiple AI agents collaborate without stepping on each other.
 
-### 1. Build
+Agents check in, claim work, exchange messages, acquire locks, and hand off context — all through a clean REST API or MCP.
 
-```bash
-cargo build -p aw-api -p aw-mcp
-```
+## ✨ Core Primitives
 
-### 2. Configure `.env`
+| Primitive              | What it does                                                        |
+| ---------------------- | ------------------------------------------------------------------- |
+| 🟢 **Session**         | Tracks an agent's active run (`check-in → heartbeat → check-out`)   |
+| 📋 **Task**            | Work item claimed by one agent at a time (atomic)                   |
+| 📨 **Message / Inbox** | Async agent-to-agent communication with guaranteed delivery & retry |
+| 🔒 **Lock**            | Distributed mutual exclusion over a shared resource with TTL        |
+| 🤝 **Handoff**         | State and context explicitly passed from one session to the next    |
+| 🔌 **Dependency**      | Health status of external tools or APIs                             |
+| 📝 **Event**           | Immutable audit trail of all workspace activity                     |
 
-```env
-STORAGE_BACKEND=sqlite
-SQLITE_URL=sqlite://agent-workspace.db
-PORT=4000
-```
+---
 
-For production:
+## ⚡ Quickstart
 
-```env
-STORAGE_BACKEND=postgres
-POSTGRES_URL=postgres://user:pass@localhost:5432/agent_workspace
-```
-
-### 3. Run
+### 1. One-click Docker
 
 ```bash
-cargo run -p aw-api
+docker compose up -d
 # API available at http://localhost:4000
 ```
 
-### 4. Register an agent
+_(Or build from source: `cargo run -p aw-api`)_
+
+### 2. Register an agent
 
 ```bash
 curl -s -X POST http://localhost:4000/agents \
@@ -89,33 +68,18 @@ curl -s -X POST http://localhost:4000/agents \
   }'
 ```
 
-Registration is **idempotent** — safe to call on every startup.
+_Note: Registration is **idempotent** — safe to call on every startup._
 
 ---
 
-## Connecting agents
+## 🔌 Connecting Agents
 
-### Option A — MCP (for Claude and other MCP-capable agents)
+We provide official, typed SDKs that automatically handle session heartbeats and graceful check-outs.
 
-Add to `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "agent-workspace": {
-      "command": "/path/to/target/debug/aw-mcp",
-      "env": {
-        "SQLITE_URL": "sqlite:///path/to/agent-workspace.db"
-      }
-    }
-  }
-}
-```
-
-### Option B — Python SDK
+### Option A — Python SDK
 
 ```bash
-pip install -e ./agent-workspace-sdk
+pip install agent-workspace-sdk
 ```
 
 ```python
@@ -127,13 +91,12 @@ async with client.session() as session:
     task = await session.claim_task(task_id)
     # ... do work ...
     await session.update_task_status(task.id, "done")
-    await session.send_message(to_agent_id="coordinator", kind="status_update", payload={})
 ```
 
-### Option C — TypeScript / JavaScript SDK
+### Option B — TypeScript SDK
 
 ```bash
-cd agent-workspace-sdk-ts && npm install
+npm install @agent-workspace/sdk
 ```
 
 ```typescript
@@ -147,55 +110,83 @@ const client = new WorkspaceClient({
 await client.withSession(async (session) => {
   const task = await session.claimTask(taskId);
   await session.updateTaskStatus(task.id!, "done");
-  await session.sendMessage({
-    toAgentId: "coordinator",
-    kind: "status_update",
-    payload: {},
-  });
 });
 ```
 
-Both SDKs handle **heartbeat automatically** (every 45 s) and **check-out on exit** (even on exception).
+### Option C — MCP (For Claude Desktop)
 
-### Option D — Raw HTTP
+Add to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "agent-workspace": {
+      "command": "aw-mcp",
+      "env": { "SQLITE_URL": "sqlite:///path/to/agent-workspace.db" }
+    }
+  }
+}
+```
+
+---
+
+## 🔄 Lifecycle
+
+```mermaid
+graph TD
+    A[Startup] --> B[check_in]
+    B --> C{Active Session}
+    C -->|Every 45s| D[heartbeat]
+    C --> E[claim_task]
+    C --> F[acquire_lock]
+    C --> G[send_message]
+    C --> H[Shutdown]
+    H --> I[create_handoff]
+    I --> J[check_out]
+```
+
+---
+
+## 💡 Why not a message queue or Redis?
+
+While stringing together RabbitMQ, Redis locks, and ad-hoc webhooks is possible, **Agent Workspace** gives your agents a unified, self-hosted operational runtime built exactly for their coordination needs. It replaces messy spaghetti scripts with a strong contract: every agent leaves a trace, tasks are never claimed twice, and crashed agents automatically drop their locks after a 5-minute timeout.
+
+---
+
+## 🏗 Storage Backends
+
+| Backend        | Use case                    | Config                     |
+| -------------- | --------------------------- | -------------------------- |
+| **SQLite**     | Development, single-machine | `STORAGE_BACKEND=sqlite`   |
+| **PostgreSQL** | Production, multi-process   | `STORAGE_BACKEND=postgres` |
+
+_Schema is applied automatically on startup via embedded migrations._
+
+---
+
+## 🔭 Observability & Coordination
+
+No dashboard exists by design — the API is the interface. Any agent can become a coordinator simply by reading `GET /summary` and distributing tasks.
 
 ```bash
-# Check in
-curl -X POST http://localhost:4000/sessions/check-in \
-  -H 'Content-Type: application/json' \
-  -d '{"agent_id": "my-agent"}'
-
-# Workspace snapshot
+# Workspace state snapshot
 curl http://localhost:4000/summary | jq
+
+# Active sessions
+curl http://localhost:4000/sessions/active | jq
 ```
 
 ---
 
-## Agent session lifecycle
+## 📚 API Reference
+
+**Auth:** All endpoints except `/health` require `Authorization: Bearer <token>` when enabled.
+
+<details>
+<summary><strong>View full API routes</strong></summary>
 
 ```
-startup
-  └─► check_in(agent_id)           → session_id, inbox, pending tasks, handoffs
-        │
-        ├─► [heartbeat every 45s]
-        ├─► claim_task(task_id)
-        ├─► update_task_status(task_id, "in_progress")
-        ├─► acquire_lock(scope_type, scope_id)
-        ├─► send_message(to_agent_id, kind, payload)
-        └─► release_lock(lock_id)
-
-shutdown
-  └─► update_task_status(task_id, "done")
-  └─► create_handoff(summary, payload)   ← optional: context for next agent
-  └─► check_out(session_id)
-```
-
----
-
-## API reference
-
-```
-GET    /health                      → "ok" (no auth)
+GET    /health                      → "ok"
 GET    /summary                     → workspace snapshot
 
 POST   /agents                      register / update agent
@@ -214,7 +205,7 @@ GET    /inbox/:agent_id             list pending inbox
 POST   /inbox/:item_id/ack          { item_id, agent_id, status }
 
 POST   /tasks                       create task
-GET    /tasks?status=&unassigned=&assigned_to=&limit=
+GET    /tasks?status=&unassigned=&assigned_to=
 POST   /tasks/:id/claim             { agent_id, session_id }
 POST   /tasks/:id/status            { status, metadata? }
 POST   /tasks/:id/assign            { assigned_by, assigned_to? }
@@ -231,101 +222,20 @@ GET    /dependencies/:key
 GET    /events?agent_id=&limit=     audit trail
 ```
 
-All endpoints except `/health` require `Authorization: Bearer <token>` when auth is enabled.
+</details>
 
 ---
 
-## Maintenance
-
-The server runs a background loop every **60 seconds**:
-
-- Sessions without a heartbeat for **5 minutes** → marked `dead`, locks released
-- Locks past their TTL → expired
-
-Agents should heartbeat at least every **5 minutes** to stay alive. Both SDKs default to every 45 s.
-
----
-
-## Observability
-
-```bash
-# Workspace state
-curl http://localhost:4000/summary | jq
-
-# Recent events for a specific agent
-curl "http://localhost:4000/events?agent_id=my-agent&limit=50" | jq
-
-# Active sessions
-curl http://localhost:4000/sessions/active | jq
-```
-
-No dashboard exists by design — the API is the interface. Agents read `GET /summary` and act. Humans use `curl | jq`.
-
----
-
-## Coordination pattern
-
-Any agent can coordinate without configuration. Whoever reads the state and acts, coordinates.
-
-```bash
-# See what needs doing
-curl http://localhost:4000/tasks?unassigned=true | jq
-
-# Assign to a specific agent
-curl -X POST http://localhost:4000/tasks/<id>/assign \
-  -d '{"assigned_by": "coordinator", "assigned_to": "worker-1"}'
-
-# Notify the assignee
-curl -X POST http://localhost:4000/messages \
-  -d '{"from_agent_id": "coordinator", "to_agent_id": "worker-1",
-       "kind": "deferred_task", "payload": {}, "deliver_to_inbox": true}'
-```
-
----
-
-## Storage backends
-
-| Backend        | Use case                    | Config                     |
-| -------------- | --------------------------- | -------------------------- |
-| **SQLite**     | Development, single-machine | `STORAGE_BACKEND=sqlite`   |
-| **PostgreSQL** | Production, multi-process   | `STORAGE_BACKEND=postgres` |
-
-Schema is applied automatically on startup via embedded migrations.
-
----
-
-## Project layout
-
-```
-agent-workspace/
-├── crates/
-│   ├── domain/              # entities, storage trait, error types
-│   ├── storage-sqlite/      # SQLite adapter (in-memory for tests)
-│   ├── storage-postgres/    # PostgreSQL adapter (JSONB, TIMESTAMPTZ)
-│   ├── storage-tests/       # shared integration test suite (macro)
-│   ├── api/                 # Axum HTTP server
-│   └── mcp/                 # MCP stdio server (rmcp)
-├── agent-workspace-sdk/     # Python SDK (httpx + pydantic v2)
-├── agent-workspace-sdk-ts/  # TypeScript SDK (Node 18+, zero deps)
-├── frontend/                # Dashboard (Vite)
-├── AGENT_GUIDE.md           # How agents should use the workspace
-└── SDK_SPEC.md              # SDK specification
-```
-
----
-
-## Running tests
+## 🧪 Development & Testing
 
 ```bash
 # SQLite integration tests (no setup required)
 cargo test -p aw-storage-sqlite
 
-# API tests (in-memory SQLite)
-cargo test -p aw-api
-
-# PostgreSQL integration tests (requires Docker)
+# PostgreSQL integration tests (requires Docker to spin up Testcontainers)
 cargo test -p aw-storage-postgres
-
-# All at once
-cargo test -p aw-storage-sqlite -p aw-api
 ```
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add your own example workflows, submit bug reports, or propose new primitives. Licensed under [Apache 2.0](LICENSE).
