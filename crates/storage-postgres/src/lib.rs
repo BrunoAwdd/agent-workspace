@@ -69,7 +69,9 @@ pub async fn connect_test(url: &str) -> anyhow::Result<(PgPool, String)> {
     Ok((pool, schema))
 }
 
-async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
+/// Run agent-workspace migrations against an existing pool.
+/// Call this when you want to reuse an external pool instead of `connect()`.
+pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
     sqlx::raw_sql(include_str!("../migrations/0001_init.sql"))
         .execute(pool)
         .await
