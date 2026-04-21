@@ -522,15 +522,26 @@ impl WorkspaceStorage for SqliteStorage {
     }
 
     async fn list_messages(&self, channel_id: &str, limit: u32) -> Result<Vec<Message>> {
-        let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, String, Option<String>, String, String, String)>(
-            "SELECT id, workspace_id, channel_id, thread_id, from_agent_id, to_agent_id, kind, payload, created_at
-             FROM messages WHERE channel_id = ?1 ORDER BY created_at ASC LIMIT ?2",
-        )
-        .bind(channel_id)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+        let rows = if channel_id.is_empty() {
+            sqlx::query_as::<_, (String, String, Option<String>, Option<String>, String, Option<String>, String, String, String)>(
+                "SELECT id, workspace_id, channel_id, thread_id, from_agent_id, to_agent_id, kind, payload, created_at
+                 FROM messages ORDER BY created_at DESC LIMIT ?1",
+            )
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?
+        } else {
+            sqlx::query_as::<_, (String, String, Option<String>, Option<String>, String, Option<String>, String, String, String)>(
+                "SELECT id, workspace_id, channel_id, thread_id, from_agent_id, to_agent_id, kind, payload, created_at
+                 FROM messages WHERE channel_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+            )
+            .bind(channel_id)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WorkspaceError::Storage(e.into()))?
+        };
 
         Ok(rows.into_iter().map(|(id, ws, ch, th, from, to, kind, payload, ca)| Message {
             id: parse_uuid(&id),
@@ -1213,5 +1224,320 @@ impl WorkspaceStorage for SqliteStorage {
             pending_inbox_total: pending_inbox_total as u64,
             active_locks_count: active_locks_count as u64,
         })
+    }
+
+    // ── Reputation ────────────────────────────────────────────────────────────
+
+    async fn upsert_review(&self, input: CreateReviewInput) -> aw_domain::error::Result<AgentReview> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO agent_reviews (id, agent_id, reviewer_id, score, review_text, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+             ON CONFLICT(agent_id, reviewer_id) DO UPDATE SET
+               score = excluded.score,
+               review_text = excluded.review_text,
+               updated_at = excluded.updated_at",
+        )
+        .bind(id.to_string())
+        .bind(&input.agent_id)
+        .bind(&input.reviewer_id)
+        .bind(input.score as i64)
+        .bind(&input.review_text)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        // Fetch back the upserted row
+        let row = sqlx::query_as::<_, (String, String, String, i64, Option<String>, String, String)>(
+            "SELECT id, agent_id, reviewer_id, score, review_text, created_at, updated_at
+             FROM agent_reviews WHERE agent_id = ?1 AND reviewer_id = ?2",
+        )
+        .bind(&input.agent_id)
+        .bind(&input.reviewer_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(AgentReview {
+            id: parse_uuid(&row.0),
+            agent_id: row.1,
+            reviewer_id: row.2,
+            score: row.3 as u8,
+            review_text: row.4,
+            created_at: parse_dt(&row.5),
+            updated_at: parse_dt(&row.6),
+        })
+    }
+
+    async fn create_endorsement(&self, input: CreateEndorsementInput) -> aw_domain::error::Result<AgentEndorsement> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        let sentiment = input.sentiment.unwrap_or_else(|| "positive".to_string());
+
+        sqlx::query(
+            "INSERT INTO agent_endorsements (id, to_agent_id, from_agent_id, sentiment, reason, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind(id.to_string())
+        .bind(&input.to_agent_id)
+        .bind(&input.from_agent_id)
+        .bind(&sentiment)
+        .bind(&input.reason)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(AgentEndorsement {
+            id,
+            to_agent_id: input.to_agent_id,
+            from_agent_id: input.from_agent_id,
+            sentiment,
+            reason: input.reason,
+            created_at: parse_dt(&now),
+        })
+    }
+
+    async fn get_reputation(&self, agent_id: &str) -> aw_domain::error::Result<AgentReputation> {
+        // Aggregate review stats
+        let stats = sqlx::query_as::<_, (Option<f64>, i64)>(
+            "SELECT AVG(CAST(score AS REAL)), COUNT(*) FROM agent_reviews WHERE agent_id = ?1",
+        )
+        .bind(agent_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        // All reviews
+        let review_rows = sqlx::query_as::<_, (String, String, String, i64, Option<String>, String, String)>(
+            "SELECT id, agent_id, reviewer_id, score, review_text, created_at, updated_at
+             FROM agent_reviews WHERE agent_id = ?1 ORDER BY updated_at DESC",
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let reviews: Vec<AgentReview> = review_rows.into_iter().map(|(id, ag, rev, sc, txt, ca, ua)| AgentReview {
+            id: parse_uuid(&id),
+            agent_id: ag,
+            reviewer_id: rev,
+            score: sc as u8,
+            review_text: txt,
+            created_at: parse_dt(&ca),
+            updated_at: parse_dt(&ua),
+        }).collect();
+
+        // Endorsements
+        let endorsement_rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+            "SELECT id, to_agent_id, from_agent_id, sentiment, reason, created_at
+             FROM agent_endorsements WHERE to_agent_id = ?1 ORDER BY created_at DESC",
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let positive_endorsements = endorsement_rows.iter().filter(|r| r.3 == "positive").count() as u32;
+        let negative_endorsements = endorsement_rows.iter().filter(|r| r.3 == "negative").count() as u32;
+
+        let endorsements: Vec<AgentEndorsement> = endorsement_rows.into_iter().map(|(id, to, from, sentiment, reason, ca)| AgentEndorsement {
+            id: parse_uuid(&id),
+            to_agent_id: to,
+            from_agent_id: from,
+            sentiment,
+            reason,
+            created_at: parse_dt(&ca),
+        }).collect();
+
+        Ok(AgentReputation {
+            agent_id: agent_id.to_string(),
+            avg_score: stats.0,
+            review_count: stats.1 as u32,
+            positive_endorsements,
+            negative_endorsements,
+            reviews,
+            endorsements,
+        })
+    }
+
+    // ── Reputation Phase 1 (dual-channel + capabilities) ─────────────────────
+
+    async fn upsert_human_review(&self, input: CreateHumanReviewInput) -> aw_domain::error::Result<HumanReview> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO human_reviews (id,agent_id,reviewer_id,task_id,stars,praise,criticism,domain_context,created_at,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)
+             ON CONFLICT(agent_id,reviewer_id) DO UPDATE SET
+               stars=excluded.stars,praise=excluded.praise,criticism=excluded.criticism,
+               domain_context=excluded.domain_context,updated_at=excluded.updated_at",
+        )
+        .bind(id.to_string()).bind(&input.agent_id).bind(&input.reviewer_id).bind(&input.task_id)
+        .bind(input.stars as i64).bind(&input.praise).bind(&input.criticism).bind(&input.domain_context).bind(&now)
+        .execute(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let row = sqlx::query_as::<_, (String,String,String,Option<String>,i64,Option<String>,Option<String>,Option<String>,String,String)>(
+            "SELECT id,agent_id,reviewer_id,task_id,stars,praise,criticism,domain_context,created_at,updated_at
+             FROM human_reviews WHERE agent_id=?1 AND reviewer_id=?2",
+        ).bind(&input.agent_id).bind(&input.reviewer_id).fetch_one(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(HumanReview { id: parse_uuid(&row.0), agent_id: row.1, reviewer_id: row.2, task_id: row.3,
+            stars: row.4 as u8, praise: row.5, criticism: row.6, domain_context: row.7,
+            created_at: parse_dt(&row.8), updated_at: parse_dt(&row.9) })
+    }
+
+    async fn upsert_agent_peer_review(&self, input: CreateAgentPeerReviewInput) -> aw_domain::error::Result<AgentPeerReview> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO agent_peer_reviews (id,to_agent_id,from_agent_id,task_id,stars,praise,criticism,domain_context,created_at,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)
+             ON CONFLICT(to_agent_id,from_agent_id) DO UPDATE SET
+               stars=excluded.stars,praise=excluded.praise,criticism=excluded.criticism,
+               domain_context=excluded.domain_context,updated_at=excluded.updated_at",
+        )
+        .bind(id.to_string()).bind(&input.to_agent_id).bind(&input.from_agent_id).bind(&input.task_id)
+        .bind(input.stars as i64).bind(&input.praise).bind(&input.criticism).bind(&input.domain_context).bind(&now)
+        .execute(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let row = sqlx::query_as::<_, (String,String,String,Option<String>,i64,Option<String>,Option<String>,Option<String>,String,String)>(
+            "SELECT id,to_agent_id,from_agent_id,task_id,stars,praise,criticism,domain_context,created_at,updated_at
+             FROM agent_peer_reviews WHERE to_agent_id=?1 AND from_agent_id=?2",
+        ).bind(&input.to_agent_id).bind(&input.from_agent_id).fetch_one(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(AgentPeerReview { id: parse_uuid(&row.0), to_agent_id: row.1, from_agent_id: row.2, task_id: row.3,
+            stars: row.4 as u8, praise: row.5, criticism: row.6, domain_context: row.7,
+            created_at: parse_dt(&row.8), updated_at: parse_dt(&row.9) })
+    }
+
+    async fn upsert_capability(&self, input: UpsertCapabilityInput) -> aw_domain::error::Result<AgentCapability> {
+        let id = Uuid::new_v4();
+        let now = Utc::now().to_rfc3339();
+        let source = input.source.unwrap_or_else(|| "manual".to_string());
+        let confidence = input.confidence.unwrap_or(1.0);
+        sqlx::query(
+            "INSERT INTO agent_capabilities (id,agent_id,domain,level,source,confidence,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(agent_id,domain) DO UPDATE SET
+               level=excluded.level,source=excluded.source,confidence=excluded.confidence,updated_at=excluded.updated_at",
+        )
+        .bind(id.to_string()).bind(&input.agent_id).bind(&input.domain)
+        .bind(input.level as i64).bind(&source).bind(confidence).bind(&now)
+        .execute(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let row = sqlx::query_as::<_, (String,String,String,i64,String,f64,String)>(
+            "SELECT id,agent_id,domain,level,source,confidence,updated_at FROM agent_capabilities WHERE agent_id=?1 AND domain=?2",
+        ).bind(&input.agent_id).bind(&input.domain).fetch_one(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(AgentCapability { id: parse_uuid(&row.0), agent_id: row.1, domain: row.2,
+            level: row.3 as u8, source: row.4, confidence: row.5, updated_at: parse_dt(&row.6) })
+    }
+
+    async fn list_capabilities(&self, agent_id: &str) -> aw_domain::error::Result<Vec<AgentCapability>> {
+        let rows = sqlx::query_as::<_, (String,String,String,i64,String,f64,String)>(
+            "SELECT id,agent_id,domain,level,source,confidence,updated_at FROM agent_capabilities WHERE agent_id=?1 ORDER BY level DESC",
+        ).bind(agent_id).fetch_all(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+        Ok(rows.into_iter().map(|(id,ag,dom,lv,src,conf,ua)| AgentCapability {
+            id: parse_uuid(&id), agent_id: ag, domain: dom, level: lv as u8,
+            source: src, confidence: conf, updated_at: parse_dt(&ua),
+        }).collect())
+    }
+
+    async fn get_full_reputation(&self, agent_id: &str) -> aw_domain::error::Result<AgentReputationFull> {
+        let h_stats = sqlx::query_as::<_, (Option<f64>,i64)>(
+            "SELECT AVG(CAST(stars AS REAL)),COUNT(*) FROM human_reviews WHERE agent_id=?1",
+        ).bind(agent_id).fetch_one(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let h_rows = sqlx::query_as::<_, (String,String,String,Option<String>,i64,Option<String>,Option<String>,Option<String>,String,String)>(
+            "SELECT id,agent_id,reviewer_id,task_id,stars,praise,criticism,domain_context,created_at,updated_at
+             FROM human_reviews WHERE agent_id=?1 ORDER BY updated_at DESC LIMIT 20",
+        ).bind(agent_id).fetch_all(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let recent_human_praise: Vec<String> = h_rows.iter().filter_map(|r| r.5.clone()).take(5).collect();
+        let recent_human_criticism: Vec<String> = h_rows.iter().filter_map(|r| r.6.clone()).take(5).collect();
+        let human_reviews: Vec<HumanReview> = h_rows.into_iter().map(|(id,ag,rev,task,stars,pr,cr,dc,ca,ua)| HumanReview {
+            id: parse_uuid(&id), agent_id: ag, reviewer_id: rev, task_id: task,
+            stars: stars as u8, praise: pr, criticism: cr, domain_context: dc,
+            created_at: parse_dt(&ca), updated_at: parse_dt(&ua),
+        }).collect();
+
+        let a_stats = sqlx::query_as::<_, (Option<f64>,i64)>(
+            "SELECT AVG(CAST(stars AS REAL)),COUNT(*) FROM agent_peer_reviews WHERE to_agent_id=?1",
+        ).bind(agent_id).fetch_one(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let a_rows = sqlx::query_as::<_, (String,String,String,Option<String>,i64,Option<String>,Option<String>,Option<String>,String,String)>(
+            "SELECT id,to_agent_id,from_agent_id,task_id,stars,praise,criticism,domain_context,created_at,updated_at
+             FROM agent_peer_reviews WHERE to_agent_id=?1 ORDER BY updated_at DESC LIMIT 20",
+        ).bind(agent_id).fetch_all(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        let recent_agent_praise: Vec<String> = a_rows.iter().filter_map(|r| r.5.clone()).take(5).collect();
+        let recent_agent_criticism: Vec<String> = a_rows.iter().filter_map(|r| r.6.clone()).take(5).collect();
+        let agent_peer_reviews: Vec<AgentPeerReview> = a_rows.into_iter().map(|(id,to,from,task,stars,pr,cr,dc,ca,ua)| AgentPeerReview {
+            id: parse_uuid(&id), to_agent_id: to, from_agent_id: from, task_id: task,
+            stars: stars as u8, praise: pr, criticism: cr, domain_context: dc,
+            created_at: parse_dt(&ca), updated_at: parse_dt(&ua),
+        }).collect();
+
+        let end_rows = sqlx::query_as::<_, (String,String,String,String,Option<String>,String)>(
+            "SELECT id,to_agent_id,from_agent_id,sentiment,reason,created_at FROM agent_endorsements WHERE to_agent_id=?1 ORDER BY created_at DESC LIMIT 20",
+        ).bind(agent_id).fetch_all(&self.pool).await.map_err(|e| WorkspaceError::Storage(e.into()))?;
+        let endorsements: Vec<AgentEndorsement> = end_rows.into_iter().map(|(id,to,from,sentiment,reason,ca)| AgentEndorsement {
+            id: parse_uuid(&id), to_agent_id: to, from_agent_id: from, sentiment, reason, created_at: parse_dt(&ca),
+        }).collect();
+
+        let capabilities = self.list_capabilities(agent_id).await?;
+
+        Ok(AgentReputationFull {
+            agent_id: agent_id.to_string(),
+            human_star_avg: h_stats.0, human_review_count: h_stats.1 as u32,
+            recent_human_praise, recent_human_criticism, human_reviews,
+            agent_star_avg: a_stats.0, agent_review_count: a_stats.1 as u32,
+            recent_agent_praise, recent_agent_criticism, agent_peer_reviews,
+            endorsements, capabilities,
+        })
+    }
+
+    // ─── Phase 2 — Eligibility Gates ──────────────────────────────────────────
+
+    async fn get_eligibility_policy(&self, task_kind: &str) -> aw_domain::error::Result<Option<EligibilityPolicy>> {
+        let row = sqlx::query_as::<_, (String, String)>(
+            "SELECT task_kind, rules FROM eligibility_policies WHERE task_kind=?1",
+        )
+        .bind(task_kind)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        if let Some((kind_str, rules_str)) = row {
+            let task_kind_enum: TaskKind = serde_json::from_str(&format!("\"{}\"", kind_str)).unwrap_or(TaskKind::Custom(kind_str.clone()));
+            let rules: EligibilityRules = serde_json::from_str(&rules_str).unwrap_or_default();
+            Ok(Some(EligibilityPolicy {
+                task_kind: task_kind_enum,
+                rules,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn upsert_eligibility_policy(&self, policy: EligibilityPolicy) -> aw_domain::error::Result<EligibilityPolicy> {
+        let kind_str = serde_json::to_string(&policy.task_kind).unwrap().trim_matches('"').to_string();
+        let rules_str = serde_json::to_string(&policy.rules).unwrap();
+
+        sqlx::query(
+            "INSERT INTO eligibility_policies (task_kind, rules) VALUES (?1, ?2)
+             ON CONFLICT(task_kind) DO UPDATE SET rules=excluded.rules",
+        )
+        .bind(&kind_str)
+        .bind(&rules_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WorkspaceError::Storage(e.into()))?;
+
+        Ok(policy)
     }
 }

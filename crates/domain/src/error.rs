@@ -17,6 +17,9 @@ pub enum WorkspaceError {
     #[error("precondition failed: {0}")]
     PreconditionFailed(String),
 
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     #[error("storage error: {0}")]
     Storage(#[from] anyhow::Error),
 }

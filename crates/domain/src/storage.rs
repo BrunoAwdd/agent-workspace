@@ -77,6 +77,24 @@ pub trait WorkspaceStorage: Send + Sync {
     async fn upsert_dependency(&self, input: UpsertDependencyInput) -> Result<Dependency>;
     async fn get_dependency(&self, key: &str) -> Result<Option<Dependency>>;
     async fn list_dependencies(&self) -> Result<Vec<Dependency>>;
+    // ─── Reputation (legacy) ──────────────────────────────────────────────────
+
+    async fn upsert_review(&self, input: CreateReviewInput) -> Result<AgentReview>;
+    async fn create_endorsement(&self, input: CreateEndorsementInput) -> Result<AgentEndorsement>;
+    async fn get_reputation(&self, agent_id: &str) -> Result<AgentReputation>;
+
+    // ─── Reputation Phase 1 — dual-channel + capabilities ────────────────────
+
+    async fn upsert_human_review(&self, input: CreateHumanReviewInput) -> Result<HumanReview>;
+    async fn upsert_agent_peer_review(&self, input: CreateAgentPeerReviewInput) -> Result<AgentPeerReview>;
+    async fn upsert_capability(&self, input: UpsertCapabilityInput) -> Result<AgentCapability>;
+    async fn list_capabilities(&self, agent_id: &str) -> Result<Vec<AgentCapability>>;
+    async fn get_full_reputation(&self, agent_id: &str) -> Result<AgentReputationFull>;
+
+    // ─── Phase 2 — Eligibility Gates ──────────────────────────────────────────
+
+    async fn get_eligibility_policy(&self, task_kind: &str) -> Result<Option<EligibilityPolicy>>;
+    async fn upsert_eligibility_policy(&self, policy: EligibilityPolicy) -> Result<EligibilityPolicy>;
 
     // ── Workspace summary ─────────────────────────────────────────────────────
 

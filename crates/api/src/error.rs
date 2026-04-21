@@ -18,6 +18,7 @@ impl IntoResponse for ApiError {
             WorkspaceError::LockConflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             WorkspaceError::SessionExpired(msg) => (StatusCode::GONE, msg.clone()),
             WorkspaceError::PreconditionFailed(msg) => (StatusCode::PRECONDITION_FAILED, msg.clone()),
+            WorkspaceError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             WorkspaceError::Storage(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         };
         (status, Json(json!({ "error": message }))).into_response()

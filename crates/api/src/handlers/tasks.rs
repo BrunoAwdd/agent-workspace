@@ -1,9 +1,10 @@
 use axum::{extract::{Path, Query, State}, Json};
-use aw_domain::entities::{AssignTaskInput, ClaimTaskInput, CreateTaskInput, ListTasksFilter, Task, TaskStatus, UpdateTaskStatusInput};
+use aw_domain::entities::{AssignTaskInput, ClaimTaskInput, CreateTaskInput, ListTasksFilter, Task, TaskKind, TaskStatus, UpdateTaskStatusInput};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{error::ApiResult, state::AppState};
+use crate::{error::{ApiError, ApiResult}, state::AppState};
+use aw_domain::error::WorkspaceError;
 
 pub async fn create_task(
     State(state): State<AppState>,
@@ -26,11 +27,60 @@ pub struct UpdateTaskStatusBody {
     metadata: Option<serde_json::Value>,
 }
 
+async fn check_task_eligibility(
+    state: &AppState,
+    agent_id: &str,
+    task_kind: &TaskKind,
+    action: &str,
+) -> ApiResult<()> {
+    let kind_str = match task_kind {
+        TaskKind::Analysis => "analysis",
+        TaskKind::WriteDocument => "write_document",
+        TaskKind::Review => "review",
+        TaskKind::EmailRead => "email_read",
+        TaskKind::HealthCheck => "health_check",
+        TaskKind::Sync => "sync",
+        TaskKind::Summarization => "summarization",
+        TaskKind::Approval => "approval",
+        TaskKind::Custom(c) => c,
+    };
+    
+    if let Some(policy) = state.storage.get_eligibility_policy(kind_str).await? {
+        let rule = match action {
+            "claim" => &policy.rules.claim,
+            "review" => &policy.rules.review,
+            "approve" => &policy.rules.approve,
+            _ => &None,
+        };
+        
+        if let Some(r) = rule {
+            if r.requires.is_empty() { return Ok(()); }
+            let caps = state.storage.list_capabilities(agent_id).await?;
+            let mut missing = Vec::new();
+            
+            for req in &r.requires {
+                let current_level = caps.iter().find(|c| c.domain == req.domain).map(|c| c.level).unwrap_or(0);
+                if current_level < req.min {
+                    missing.push(format!("{} >= {}", req.domain, req.min));
+                }
+            }
+            
+            if !missing.is_empty() {
+                return Err(WorkspaceError::Forbidden(format!("Eligibility failed: missing {}", missing.join(", "))).into());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn claim_task(
     State(state): State<AppState>,
     Path(task_id): Path<Uuid>,
     Json(body): Json<ClaimTaskBody>,
 ) -> ApiResult<Json<Task>> {
+    let task = state.storage.get_task(task_id).await?.ok_or_else(|| WorkspaceError::NotFound("Task not found".into()))?;
+    check_task_eligibility(&state, &body.agent_id, &task.kind, "claim").await?;
+
     let task = state.storage.claim_task(ClaimTaskInput {
         task_id,
         agent_id: body.agent_id,

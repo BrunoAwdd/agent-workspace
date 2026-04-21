@@ -403,9 +403,185 @@ pub struct CreateHandoffInput {
     pub payload: Option<serde_json::Value>,
 }
 
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UpsertDependencyInput {
     pub key: String,
     pub state: DependencyState,
     pub details: Option<String>,
+}
+
+// ── Reputation (legacy — preserved for backward compat) ─────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentReview {
+    pub id: Uuid,
+    pub agent_id: String,
+    pub reviewer_id: String,
+    pub score: u8,
+    pub review_text: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentEndorsement {
+    pub id: Uuid,
+    pub to_agent_id: String,
+    pub from_agent_id: String,
+    pub sentiment: String,
+    pub reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentReputation {
+    pub agent_id: String,
+    pub avg_score: Option<f64>,
+    pub review_count: u32,
+    pub positive_endorsements: u32,
+    pub negative_endorsements: u32,
+    pub reviews: Vec<AgentReview>,
+    pub endorsements: Vec<AgentEndorsement>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CreateReviewInput {
+    pub agent_id: String,
+    pub reviewer_id: String,
+    pub score: u8,
+    pub review_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CreateEndorsementInput {
+    pub to_agent_id: String,
+    pub from_agent_id: String,
+    pub sentiment: Option<String>,
+    pub reason: Option<String>,
+}
+
+// ── Full Reputation System (Phase 1) ─────────────────────────────────────────
+
+/// A review submitted by a human evaluator (stars 1-5, optional praise + criticism).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HumanReview {
+    pub id: Uuid,
+    pub agent_id: String,
+    pub reviewer_id: String,
+    pub task_id: Option<String>,
+    pub stars: u8,
+    pub praise: Option<String>,
+    pub criticism: Option<String>,
+    pub domain_context: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A structured review submitted by one agent about another (stars 1-5, praise + criticism).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentPeerReview {
+    pub id: Uuid,
+    pub to_agent_id: String,
+    pub from_agent_id: String,
+    pub task_id: Option<String>,
+    pub stars: u8,
+    pub praise: Option<String>,
+    pub criticism: Option<String>,
+    pub domain_context: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A single domain capability entry for an agent (e.g. coding: 4).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCapability {
+    pub id: Uuid,
+    pub agent_id: String,
+    pub domain: String,
+    pub level: u8, // 0-5
+    pub source: String, // "manual" | "evidence" | "benchmark"
+    pub confidence: f64,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Full dual-channel reputation: separate human and agent scores + capabilities.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentReputationFull {
+    pub agent_id: String,
+    // Human channel
+    pub human_star_avg: Option<f64>,
+    pub human_review_count: u32,
+    pub recent_human_praise: Vec<String>,
+    pub recent_human_criticism: Vec<String>,
+    pub human_reviews: Vec<HumanReview>,
+    // Agent channel
+    pub agent_star_avg: Option<f64>,
+    pub agent_review_count: u32,
+    pub recent_agent_praise: Vec<String>,
+    pub recent_agent_criticism: Vec<String>,
+    pub agent_peer_reviews: Vec<AgentPeerReview>,
+    // Legacy endorsements (preserved)
+    pub endorsements: Vec<AgentEndorsement>,
+    // Domain capability map
+    pub capabilities: Vec<AgentCapability>,
+}
+
+// ── Input types for Phase 1 ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CreateHumanReviewInput {
+    pub agent_id: String,
+    pub reviewer_id: String,
+    pub task_id: Option<String>,
+    pub stars: u8,
+    pub praise: Option<String>,
+    pub criticism: Option<String>,
+    pub domain_context: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CreateAgentPeerReviewInput {
+    pub to_agent_id: String,
+    pub from_agent_id: String,
+    pub task_id: Option<String>,
+    pub stars: u8,
+    pub praise: Option<String>,
+    pub criticism: Option<String>,
+    pub domain_context: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UpsertCapabilityInput {
+    pub agent_id: String,
+    pub domain: String,
+    pub level: u8,
+    pub source: Option<String>, // defaults to "manual"
+    pub confidence: Option<f64>, // defaults to 1.0
+}
+
+// ── Phase 2 — Eligibility Gates ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EligibilityPolicy {
+    pub task_kind: TaskKind,
+    pub rules: EligibilityRules,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct EligibilityRules {
+    pub claim: Option<ActionRule>,
+    pub review: Option<ActionRule>,
+    pub approve: Option<ActionRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ActionRule {
+    pub requires: Vec<CapabilityRequirement>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CapabilityRequirement {
+    pub domain: String,
+    pub min: u8,
 }

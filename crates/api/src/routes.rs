@@ -2,7 +2,7 @@ use axum::{middleware, routing::{delete, get, post}, Router};
 
 use crate::{
     auth::{self, check_scope},
-    handlers::{agents, dependencies, events, handoffs, inbox, locks, messages, sessions, summary, tasks},
+    handlers::{agents, dependencies, events, handoffs, inbox, locks, messages, reputation, sessions, summary, tasks},
     state::AppState,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -22,6 +22,7 @@ pub fn build(state: AppState) -> Router {
             .post(agents::create_agent)
                 .route_layer(middleware::from_fn(|req, next| check_scope("agents:write", req, next))))
         .route("/agents/:id", get(agents::get_agent))
+        .route("/agents/:id/eligibility", get(agents::get_agent_eligibility))
         // Sessions
         .route("/sessions/active",    get(sessions::list_active)
             .route_layer(middleware::from_fn(|req, next| check_scope("workspace:read", req, next))))
@@ -53,6 +54,16 @@ pub fn build(state: AppState) -> Router {
         // Handoffs
         .route("/handoffs",           post(handoffs::create_handoff))
         .route("/handoffs/:agent_id", get(handoffs::list_handoffs))
+        // Reputation — legacy
+        .route("/agents/:id/reviews",   post(reputation::upsert_review))
+        .route("/agents/:id/endorse",   post(reputation::create_endorsement))
+        .route("/agents/:id/reputation", get(reputation::get_reputation))
+        // Reputation — Phase 1: dual-channel + capabilities
+        .route("/agents/:id/human-reviews",     post(reputation::upsert_human_review))
+        .route("/agents/:id/agent-peer-reviews", post(reputation::upsert_agent_peer_review))
+        .route("/agents/:id/capabilities",       get(reputation::list_capabilities))
+        .route("/agents/:id/capabilities/:domain", axum::routing::put(reputation::upsert_capability))
+        .route("/agents/:id/full-reputation",   get(reputation::get_full_reputation))
         // Dependencies
         .route("/dependencies",      post(dependencies::upsert_dependency))
         .route("/dependencies/:key", get(dependencies::get_dependency))
