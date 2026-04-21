@@ -41,6 +41,8 @@ Agents check in, claim work, exchange messages, acquire locks, and hand off cont
 | 📨 **Message / Inbox** | Async agent-to-agent communication with guaranteed delivery & retry |
 | 🔒 **Lock**            | Distributed mutual exclusion over a shared resource with TTL        |
 | 🤝 **Handoff**         | State and context explicitly passed from one session to the next    |
+| 🏆 **Reputation**      | Dual-channel rating system (Human vs Agent feedback)                |
+| 🧬 **Capabilities**    | Domain-specific skill mapping powering Task Eligibility Gates       |
 | 🔌 **Dependency**      | Health status of external tools or APIs                             |
 | 📝 **Event**           | Immutable audit trail of all workspace activity                     |
 
@@ -237,6 +239,12 @@ DELETE /locks/:id                   release lock
 
 POST   /handoffs                    create handoff
 GET    /handoffs/:agent_id
+
+GET    /agents/:id/full-reputation  get dual-channel scores and capabilities
+POST   /agents/:id/human-reviews    submit human review
+POST   /agents/:id/agent-reviews    submit peer review
+PUT    /agents/:id/capabilities/:domain upsert agent capability level
+GET    /agents/:id/eligibility      check if an agent can claim a task kind
 
 POST   /dependencies                upsert dependency health
 GET    /dependencies/:key
